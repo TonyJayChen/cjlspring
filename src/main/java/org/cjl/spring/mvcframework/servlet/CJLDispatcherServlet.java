@@ -13,8 +13,10 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.net.URL;
 import java.util.*;
 import java.util.stream.Stream;
@@ -26,7 +28,7 @@ public class CJLDispatcherServlet extends HttpServlet {
 
     //2 IOC容器初始化
     private Map<String,Object> Ioc = new HashMap<>();
-
+    //定义Properties配置文件的变量
     private Properties contextCofig = new Properties();
 
     private  List<String> classNames = new ArrayList<>();
@@ -35,7 +37,7 @@ public class CJLDispatcherServlet extends HttpServlet {
 
     @Override
     public void init(ServletConfig config) throws ServletException {
-        //1 加载配置文件
+        //1 加载配置文件,填写的为web.xml中的对应的配置文件名称
         doLoadConfig(config.getInitParameter("contextConfigLocation"));
         //3 扫描相关的类
         doScannet(contextCofig.getProperty("scanPackage"));
@@ -49,16 +51,21 @@ public class CJLDispatcherServlet extends HttpServlet {
         System.out.println("Cjl Spring init Ok!!!");
     }
 
+    /**
+     * 加载请求地址
+     */
     private void doInitHandlerMapping() {
         if(Ioc.isEmpty()){
             return;
         }
         Ioc.entrySet().stream().forEach(entry->{
+            //获取class
             Class<?> clazz = entry.getValue().getClass();
             if(!clazz.isAnnotationPresent(CJLController.class)){
                 return;
             }
             String bsaeUrl = "";
+            //判断是否使用的请求注解
             if(clazz.isAnnotationPresent(CJLRequestMapping.class)){
                 CJLRequestMapping cjlRequestMapping = clazz.getAnnotation(CJLRequestMapping.class);
                 bsaeUrl = cjlRequestMapping.value();
@@ -69,32 +76,43 @@ public class CJLDispatcherServlet extends HttpServlet {
                     continue;
                 }
                 CJLRequestMapping requestMapping = method.getAnnotation(CJLRequestMapping.class);
+                //根据类的请求地址加上方法请求地址组合成具体的请求
                 String url = ("/" + bsaeUrl + "/" + requestMapping.value()).replaceAll("/+","/");
+                //将其放入mappng容器中
                 handlerMappng.put(url,method);
                 System.out.println("Mapped:"+url+","+method);
             }
         });
     }
 
+    /**
+     *  分配实例化的bean到相关类中
+     */
     private void doAutowired() {
         if(Ioc.isEmpty()){
             return;
         }
         Ioc.entrySet().forEach(entry->{
             //public、private、protected、default
+            //获取所有的声明字段
             Field [] fields = entry.getValue().getClass().getDeclaredFields();
             Arrays.stream(fields).forEach(field -> {
+                //判断该字段是否使用的注入注解
                 if(!field.isAnnotationPresent(CJLAutowird.class)){
                     return;
                 }
+                //获取当前注解
                 CJLAutowird autowird = field.getAnnotation(CJLAutowird.class);
+                //获取自定义字段名
                 String beanName = autowird.value().trim();
+                //如字段名为空则获取字段名
                 if("".equals(beanName)){
                     beanName = field.getType().getName();
                 }
                 //设置访问权限，实行暴力访问
                 field.setAccessible(true);
                 try {
+                    //注入相关实例化
                     field.set(entry.getValue(),Ioc.get(beanName));
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();
@@ -103,29 +121,44 @@ public class CJLDispatcherServlet extends HttpServlet {
         });
     }
 
+    /**
+     * 创建所有类名并且实例化对象，加载到IOC容器中
+     */
     private void doInstance() {
+        //读取类名是否为空
         if(classNames.isEmpty()){
             return;
         }
+        //迭代所有类名
         classNames.forEach(className->{
             try {
+                //根据类名获取其class
                 Class<?> clazz = Class.forName(className);
+                //判断当前类是否使用了控制层注解
                 if(clazz.isAnnotationPresent(CJLController.class)){
                     //1、默认规则，类名首字母小写
+                    //获取bean名
                     String beanName = toLoweFistCase(clazz.getSimpleName());
+                    //创建实例化
                     Object instance = clazz.newInstance();
+                    //进入IOC容器
                     Ioc.put(beanName,instance);
-                }else if(clazz.isAnnotationPresent(CJLService.class)){
+                }else//判断当前类是否使用了服务层注解
+                    if(clazz.isAnnotationPresent(CJLService.class)){
                     //1、默认规则，类名首字母小写
+                    //获取bean名
                     String beanName = toLoweFistCase(clazz.getSimpleName());
-                    //2、自定义类名
+                    //2、读取其是否有自定义boen名
                     CJLService service = clazz.getAnnotation(CJLService.class);
                     if("".equals(service.value())){
                         beanName = service.value();
                     }
+                    //创建实例化
                     Object instance = clazz.newInstance();
+                    //进入IOC容器
                     Ioc.put(beanName,instance);
                     //3.接口注入
+                    //迭代其类的接口名称，将其接口实例化为实现类
                     Arrays.stream(clazz.getInterfaces()).forEach(azz->{
                         if(Ioc.containsKey(azz.getName())){
                             try {
@@ -160,26 +193,41 @@ public class CJLDispatcherServlet extends HttpServlet {
         return String.valueOf(chars);
     }
 
+    /**
+     * 扫描配置文件中所定义包位置
+     * @param scanPackage
+     */
     private void doScannet(String scanPackage) {
+        //获取包地址
         URL url = this.getClass().getClassLoader().getResource("/" + scanPackage.replaceAll("\\.","/"));
+        //读取地址中的所有文件或文件夹
         File classPath = new File(url.getFile());
-        //迭代类名
+        //迭代所有类文件
         Arrays.stream(classPath.listFiles()).forEach(file->{
+            //如果是文件夹的话则进一步迭代
             if(file.isDirectory()){
                 doScannet(scanPackage + "." + file.getName());
             }else{
+                //获取文件是否为clsaa（字节码）文件
                 if(!file.getName().endsWith(".class")){
                     return;
                 }
+                //读取类名，去除class后缀
                 String className =scanPackage + "." + file.getName().replaceAll(".class","");
                 classNames.add(className);
             }
         });
     }
 
+    /**
+     *  读取Properties配置文件
+     * @param contextConfigLocation
+     */
     private void doLoadConfig(String contextConfigLocation){
+        //读取配置文件为文件流
         InputStream is = this.getClass().getClassLoader().getResourceAsStream(contextConfigLocation);
         try {
+            //加载Properties配置文件
             contextCofig.load(is);
         }catch (IOException e){
             e.printStackTrace();
@@ -209,21 +257,46 @@ public class CJLDispatcherServlet extends HttpServlet {
         }
     }
 
+    /**
+     * 具体执行
+     * @param req
+     * @param resp
+     * @throws Exception
+     */
     private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        //获取请求地址
         String url = req.getRequestURI();
         String contextPath = req.getContextPath();
         url = url.replaceAll(contextPath,"").replaceAll("/+","/");
+        //校验地址是否存在
         if(!this.handlerMappng.containsKey(url)){
             resp.getWriter().write("404 Not Found!");
         }
-
+        //拿到相关地址method实例化
         Method method =  this.handlerMappng.get(url);
+        //获取传递值
         Map<String,String[]> params = req.getParameterMap();
         if(null==method){
             return;
         }
         String beanName = toLoweFistCase(method.getDeclaringClass().getSimpleName());
-        method.invoke(Ioc.get(beanName),new Object[]{req,resp,params.get("name")[0]});
+        Class[] parameterClazzs = method.getParameterTypes();
+        List<Object> objectList = new ArrayList<>();
+        //判断是否存在request和response
+        //目前只支持在常规参数前去传递
+        Arrays.stream(parameterClazzs).forEach(clazz -> {
+            if("HttpServletRequest".equals(clazz.getSimpleName())){
+                objectList.add(req);
+            }else if("HttpServletResponse".equals(clazz.getSimpleName())){
+                objectList.add(resp);
+            }
+
+        });
+        //获取常规传参
+        params.entrySet().forEach(param->{
+            objectList.add(param.getValue()[0]);
+        });
+        method.invoke(Ioc.get(beanName),objectList.toArray());
     }
 
 }

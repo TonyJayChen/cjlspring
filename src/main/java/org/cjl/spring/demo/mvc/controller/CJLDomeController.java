@@ -13,7 +13,7 @@ public class CJLDomeController {
 
 
     @CJLRequestMapping("/query")
-    public void query(HttpServletRequest request, HttpServletResponse response,@CJLRequestParam("name") String name){
+    public void query(HttpServletRequest request,HttpServletResponse response,@CJLRequestParam("name") String name){
         String result = "my name is " +name + "========";
         try {
             response.getWriter().write(result);
