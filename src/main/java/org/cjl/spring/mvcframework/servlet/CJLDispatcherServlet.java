@@ -1,9 +1,7 @@
 package org.cjl.spring.mvcframework.servlet;
 
-import org.cjl.spring.mvcframework.servlet.annotation.CJLAutowird;
-import org.cjl.spring.mvcframework.servlet.annotation.CJLController;
-import org.cjl.spring.mvcframework.servlet.annotation.CJLRequestMapping;
-import org.cjl.spring.mvcframework.servlet.annotation.CJLService;
+import org.cjl.spring.demo.aop.agent.MyProxy;
+import org.cjl.spring.mvcframework.servlet.annotation.*;
 
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
@@ -27,13 +25,21 @@ import java.util.stream.Stream;
 public class CJLDispatcherServlet extends HttpServlet {
 
     //2 IOC容器初始化
-    private Map<String,Object> Ioc = new HashMap<>();
+    private static Map<String,Object> Ioc = new HashMap<>();
     //定义Properties配置文件的变量
     private Properties contextCofig = new Properties();
 
     private  List<String> classNames = new ArrayList<>();
 
     private Map<String, Method> handlerMappng = new HashMap<>();
+
+    /**
+     * 获取BeanFactory
+     * @return
+     */
+    public static Map<String, Object> getBeanFactory(){
+        return Ioc;
+    }
 
     @Override
     public void init(ServletConfig config) throws ServletException {
@@ -43,11 +49,11 @@ public class CJLDispatcherServlet extends HttpServlet {
         doScannet(contextCofig.getProperty("scanPackage"));
         //4 创建实例化并保存至IOC容器
         doInstance();
+        updateBeanFromBeanFactory();
         //5 完成依赖注入(DI)
         doAutowired();
         //6 初始化HandlerMapping
         doInitHandlerMapping();
-
         System.out.println("Cjl Spring init Ok!!!");
     }
 
@@ -107,7 +113,7 @@ public class CJLDispatcherServlet extends HttpServlet {
                 String beanName = autowird.value().trim();
                 //如字段名为空则获取字段名
                 if("".equals(beanName)){
-                    beanName = field.getType().getName();
+                beanName = field.getType().getName();
                 }
                 //设置访问权限，实行暴力访问
                 field.setAccessible(true);
@@ -150,7 +156,7 @@ public class CJLDispatcherServlet extends HttpServlet {
                     String beanName = toLoweFistCase(clazz.getSimpleName());
                     //2、读取其是否有自定义boen名
                     CJLService service = clazz.getAnnotation(CJLService.class);
-                    if("".equals(service.value())){
+                    if(!"".equals(service.value())){
                         beanName = service.value();
                     }
                     //创建实例化
@@ -169,6 +175,31 @@ public class CJLDispatcherServlet extends HttpServlet {
                         }
                         Ioc.put(azz.getName(),instance);
                     });
+                }else if(clazz.isAnnotationPresent(CJLComponent.class)){
+                        //1、默认规则，类名首字母小写
+                        //获取bean名
+                        String beanName = toLoweFistCase(clazz.getSimpleName());
+                        //2、读取其是否有自定义boen名
+                        CJLComponent service = clazz.getAnnotation(CJLComponent.class);
+                        if(!"".equals(service.value())){
+                            beanName = service.value();
+                        }
+                        //创建实例化
+                        Object instance = clazz.newInstance();
+                        //进入IOC容器
+                        Ioc.put(beanName,instance);
+                        //3.接口注入
+                        //迭代其类的接口名称，将其接口实例化为实现类
+                        Arrays.stream(clazz.getInterfaces()).forEach(azz->{
+                            if(Ioc.containsKey(azz.getName())){
+                                try {
+                                    throw new Exception("The beanName is exists!!");
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                            }
+                            Ioc.put(azz.getName(),instance);
+                        });
                 }else {
                     return;
                 }
@@ -299,4 +330,29 @@ public class CJLDispatcherServlet extends HttpServlet {
         method.invoke(Ioc.get(beanName),objectList.toArray());
     }
 
+     /**
+      * 根据全类名更新BeanFactory中的bean
+      * @param typeName
+      * @param proxyInstance
+      */
+         public static void updateBeanFromBeanFactory(String typeName, Object proxyInstance) {
+             Ioc.put(typeName, proxyInstance);
+        }
+    /**
+     * 扫描BeanFactory，找出方法上有@Aspect注解的bean，为其创建代理类对象，并替代原bean。
+     */
+    public static void updateBeanFromBeanFactory() {
+        for (Map.Entry<String, Object> entry : Ioc.entrySet()) {
+            if (null != entry.getValue().getClass().getDeclaredAnnotation(CJLAspect.class)) {
+                MyProxy.updateBean(entry.getKey(), entry.getValue());
+            }
+        }
+//        Ioc.entrySet().forEach(entry->{
+//            if (null != entry.getValue().getClass().getDeclaredAnnotation(CJLAspect.class)) {
+//                MyProxy.updateBean(entry.getKey(), entry.getValue());
+//            }
+//        });
+
+
+    }
 }
