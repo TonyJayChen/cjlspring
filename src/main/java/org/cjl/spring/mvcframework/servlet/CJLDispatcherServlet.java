@@ -49,6 +49,7 @@ public class CJLDispatcherServlet extends HttpServlet {
         doScannet(contextCofig.getProperty("scanPackage"));
         //4 创建实例化并保存至IOC容器
         doInstance();
+        //动态代理AOP，然后放入IOC中
         updateBeanFromBeanFactory();
         //5 完成依赖注入(DI)
         doAutowired();
